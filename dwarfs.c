@@ -3,6 +3,28 @@
 #include <linux/module.h>
 #include <linux/fs.h>
 
+static int dwarfs_iterate(struct file *fp, struct dir_context* dir)
+{
+    printk(KERN_INFO "Called iterate!\n");
+    return 0;
+}
+
+const struct file_operations dwarfs_dir_operations = {
+    .owner = THIS_MODULE,
+    .iterate = dwarfs_iterate,
+};
+
+struct dentry *dwarfs_lookup(struct inode *parent_inode,
+                             struct dentry *child_dentry,
+                             unsigned int flags)
+{
+    return NULL;
+}
+
+static struct inode_operations dwarfs_inode_operations = {
+    .lookup = dwarfs_lookup,
+};
+
 struct inode *dwarfs_get_inode(struct super_block *sb,
                                const struct inode *dir,
                                umode_t mode,
@@ -41,6 +63,9 @@ int dwarfs_fill_super(struct super_block *sb, void *data, int silent)
     sb->s_magic = 0x00940303;
 
     inode = dwarfs_get_inode(sb, NULL, S_IFDIR, 0);
+    inode->i_op = &dwarfs_inode_operations;
+    inode->i_fop = &dwarfs_dir_operations;
+
     sb->s_root = d_make_root(inode);
     if (!sb->s_root)
         return -ENOMEM;
@@ -53,6 +78,9 @@ static struct dentry *dwarfs_mount(struct file_system_type *fs_type,
                                    void *data)
 {
     struct dentry *ret;
+
+    // before mount fs
+    printk(KERN_INFO "dwarfs is mounting ...\n");
     
     ret = mount_bdev(fs_type, flags, dev_name, data, dwarfs_fill_super);
 
@@ -66,7 +94,7 @@ static struct dentry *dwarfs_mount(struct file_system_type *fs_type,
 
 static void dwarfs_kill_superblock(struct super_block *s)
 {
-    printk(KERN_INFO,
+    printk(KERN_INFO
             "dwarfs superblock is destroyed. Unmount successful.\n");
     return ;
 }

@@ -6,3 +6,10 @@ all:
 
 clean:
 	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) clean
+
+INCLUDE=include
+SRC=src
+BIN=bin
+
+CC=gcc
+
