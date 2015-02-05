@@ -2,10 +2,12 @@
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/fs.h>
+#include <linux/buffer_head.h>
+
+#include "dwarfs.h"
 
 static int dwarfs_iterate(struct file *fp, struct dir_context* dir)
 {
-    printk(KERN_INFO "Called iterate!\n");
     return 0;
 }
 
@@ -30,12 +32,15 @@ struct inode *dwarfs_get_inode(struct super_block *sb,
                                umode_t mode,
                                dev_t dev)
 {
+    // set up i_state and i_sb_list
     struct inode *inode = new_inode(sb);
-    if (inode)
+    if (inode) // if it's ok
     {
+        // index number of inode
         inode->i_ino = get_next_ino();
+        // set up several authorities
         inode_init_owner(inode, dir, mode);
-
+        // time variables
         inode->i_atime = inode->i_mtime = inode->i_ctime = CURRENT_TIME;
 
         switch (mode & S_IFMT)
@@ -60,7 +65,43 @@ int dwarfs_fill_super(struct super_block *sb, void *data, int silent)
 {
     struct inode *inode;
 
-    sb->s_magic = 0x00940303;
+    // read super_block from disk;
+    // by using "block cache"
+    struct buffer_head *bh;
+    struct dwarfs_super_block *sb_disk;
+
+    // sb here provides bdev and block_size information
+    bh = (struct buffer_head *) sb_bread(sb, 0);
+    // transform block data by type casting
+    sb_disk = (struct dwarfs_super_block *) bh->b_data;
+
+    // now check the device, to see if it has been occupied by other file systems.
+
+    printk(KERN_INFO "The magic number obtained in disk is [%d]\n",
+            sb_disk->magic);
+
+    if (unlikely(sb_disk->magic != DWARFS_MAGIC))
+    {
+        printk(KERN_ERR
+                "The filesystem you try to mount is not the type of "
+                "dwarfs. Magic number mismatched.\n");
+        return -EPERM;
+    }
+
+    if (unlikely(sb_disk->block_size != DWARFS_DEFAULT_BLOCK_SIZE))
+    {
+        printk(KERN_ERR,
+                "dwarfs seem to be formatted using a non-standard block size.\n");
+        return -EPERM;
+    }
+
+    printk(KERN_INFO
+            "dwarfs filesystem of version [%d] formatted with "
+            "a block size of [%d] detected in the device.\n",
+            sb_disk->version,
+            sb_disk->block_size);
+
+    sb->s_magic = DWARFS_MAGIC;
 
     inode = dwarfs_get_inode(sb, NULL, S_IFDIR, 0);
     inode->i_op = &dwarfs_inode_operations;
@@ -81,7 +122,7 @@ static struct dentry *dwarfs_mount(struct file_system_type *fs_type,
 
     // before mount fs
     printk(KERN_INFO "dwarfs is mounting ...\n");
-    
+
     ret = mount_bdev(fs_type, flags, dev_name, data, dwarfs_fill_super);
 
     if (unlikely(IS_ERR(ret)))
@@ -110,7 +151,7 @@ struct file_system_type dwarfs_fs_type = {
 static int dwarfs_init(void)
 {
     int ret;
-    
+
     ret = register_filesystem(&dwarfs_fs_type);
     if (likely(ret==0))
         printk(KERN_INFO "Successfully registered dwarfs\n");
