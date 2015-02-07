@@ -1,19 +1,48 @@
 
-#include <linux/init.h>
 #include <linux/module.h>
 #include <linux/fs.h>
 #include <linux/buffer_head.h>
+#include <linux/slab.h>
 
-#include "dwarfs.h"
+#include "super.h"
 
-static int dwarfs_iterate(struct file *fp, struct dir_context* dir)
+static int dwarfs_readdir(struct file *fp, struct dir_context* dir)
 {
-    return 0;
+    loff_t pos = fp->f_pos;
+    struct inode *inode = fp->f_dentry->d_inode;
+    struct super_block *sb = inode->i_sb;
+    struct buffer_head *bh;
+    struct dwarfs_inode *d_fs_inode;
+    struct dwarfs_dir_record *d_fs_dir_record;
+    int i;
+
+    printk(KERN_INFO "Reading dir... The pos[%lld], inode number[%lu], superblock magic [%lu]\n",
+            pos,
+            inode->i_ino,
+            sb->s_magic);
+
+    d_fs_inode = inode->i_private;
+
+    if (unlikely(!S_ISDIR(d_fs_inode->mode)))
+    {
+        printk(KERN_ERR "inode %u not a directory.\n", d_fs_inode->inode_no);
+        return -ENOTDIR;
+    }
+    bh = (struct buffer_head *) sb_bread(sb, d_fs_inode->data_block_number);
+
+    d_fs_dir_record = (struct dwarfs_dir_record*) bh->b_data;
+    for (i = 0; i < d_fs_inode->dir_children_count; i++)
+    {
+        printk(KERN_INFO "Got filename: %s\n", d_fs_dir_record->filename);
+        pos += sizeof(struct dwarfs_dir_record);
+    }
+
+    return 1;
 }
 
 const struct file_operations dwarfs_dir_operations = {
     .owner = THIS_MODULE,
-    .iterate = dwarfs_iterate,
+    .iterate = dwarfs_readdir,
 };
 
 struct dentry *dwarfs_lookup(struct inode *parent_inode,
@@ -63,7 +92,7 @@ struct inode *dwarfs_get_inode(struct super_block *sb,
 
 int dwarfs_fill_super(struct super_block *sb, void *data, int silent)
 {
-    struct inode *inode;
+    struct inode *root_inode;
 
     // read super_block from disk;
     // by using "block cache"
@@ -90,7 +119,7 @@ int dwarfs_fill_super(struct super_block *sb, void *data, int silent)
 
     if (unlikely(sb_disk->block_size != DWARFS_DEFAULT_BLOCK_SIZE))
     {
-        printk(KERN_ERR,
+        printk(KERN_ERR
                 "dwarfs seem to be formatted using a non-standard block size.\n");
         return -EPERM;
     }
@@ -103,11 +132,18 @@ int dwarfs_fill_super(struct super_block *sb, void *data, int silent)
 
     sb->s_magic = DWARFS_MAGIC;
 
-    inode = dwarfs_get_inode(sb, NULL, S_IFDIR, 0);
-    inode->i_op = &dwarfs_inode_operations;
-    inode->i_fop = &dwarfs_dir_operations;
+    sb->s_fs_info = sb_disk;
 
-    sb->s_root = d_make_root(inode);
+    root_inode = new_inode(sb);
+    root_inode->i_ino = DWARFS_ROOT_INODE_NUMBER;
+    inode_init_owner(root_inode, NULL, S_IFDIR);
+    root_inode->i_sb = sb;
+    root_inode->i_op = &dwarfs_inode_operations;
+    root_inode->i_fop = &dwarfs_dir_operations;
+    root_inode->i_atime = root_inode->i_ctime = CURRENT_TIME;
+    root_inode->i_private = &(sb_disk->root_inode);
+
+    sb->s_root = d_make_root(root_inode);
     if (!sb->s_root)
         return -ENOMEM;
     return 0;
